@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Calendar, CheckSquare, Save, AlertTriangle, QrCode } from 'lucide-react';
+import { Calendar, Save, QrCode, UserCheck, Hash, Search, PlusCircle, CheckCircle2, Sparkles, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/AuthContext';
 import { useClassData } from '../hooks/useClassData';
@@ -16,21 +16,33 @@ const statusOptions: AttendanceStatus[] = ['Hadir', 'Sakit', 'Izin', 'Alpa', 'Te
 export default function AbsensiHarian() {
   const location = useLocation();
   const { profile } = useAuth();
-  const { classData, students, loading: classLoading } = useClassData();
+  const { classData, students, loading: classLoading, refetch } = useClassData();
   const [date, setDate] = useState(getTodayString());
+  
+  // Track processed student IDs for today (scanned via QR code or entered via NISN)
+  const [processedStudentIds, setProcessedStudentIds] = useState<Set<string>>(new Set());
+  
   const [attendances, setAttendances] = useState<Record<string, AttendanceStatus>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [existingAttendances, setExistingAttendances] = useState<Record<string, Attendance>>({});
   const [correctionReasons, setCorrectionReasons] = useState<Record<string, string>>({});
   const [existingIds, setExistingIds] = useState<Record<string, string>>({});
+  
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showConfirmMarkAll, setShowConfirmMarkAll] = useState(false);
   const [showConfirmSave, setShowConfirmSave] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [showManualNisnModal, setShowManualNisnModal] = useState(false);
+  
+  // NISN Manual Form state
+  const [manualNisn, setManualNisn] = useState('');
+  const [manualStudentName, setManualStudentName] = useState('');
+  const [manualStatus, setManualStatus] = useState<AttendanceStatus>('Hadir');
+  const [manualNote, setManualNote] = useState('');
+  
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
-  // If navigated directly from QR scan in top header
+  // Handle direct navigation from header QR scan
   useEffect(() => {
     if (location.state && (location.state as any).qrScanned) {
       const code = (location.state as any).code || 'Barcode Presensi';
@@ -43,19 +55,6 @@ export default function AbsensiHarian() {
       fetchExistingAttendances();
     }
   }, [classData, students, date]);
-
-  useEffect(() => {
-    // Initialize default statuses
-    const initial: Record<string, AttendanceStatus> = {};
-    const initialNotes: Record<string, string> = {};
-    students.forEach(s => {
-      if (!existingAttendances[s.id]) {
-        initial[s.id] = attendances[s.id] || 'Hadir';
-        initialNotes[s.id] = notes[s.id] || '';
-      }
-    });
-    setAttendances(prev => ({ ...initial, ...prev }));
-  }, [students, existingAttendances]);
 
   async function fetchExistingAttendances() {
     setLoading(true);
@@ -70,18 +69,21 @@ export default function AbsensiHarian() {
       const idMap: Record<string, string> = {};
       const statusMap: Record<string, AttendanceStatus> = {};
       const notesMap: Record<string, string> = {};
+      const processed = new Set<string>();
 
       data?.forEach((a: Attendance) => {
         attMap[a.student_id] = a;
         idMap[a.student_id] = a.id;
         statusMap[a.student_id] = a.status;
         notesMap[a.student_id] = a.notes || '';
+        processed.add(a.student_id);
       });
 
       setExistingAttendances(attMap);
       setExistingIds(idMap);
       setAttendances(prev => ({ ...statusMap, ...prev }));
       setNotes(notesMap);
+      setProcessedStudentIds(processed);
     } catch (err) {
       console.error('Error fetching attendances:', err);
     } finally {
@@ -101,27 +103,19 @@ export default function AbsensiHarian() {
     setCorrectionReasons(prev => ({ ...prev, [studentId]: reason }));
   }
 
-  function handleMarkAllHadir() {
-    const newAtt: Record<string, AttendanceStatus> = {};
-    students.forEach(s => {
-      newAtt[s.id] = 'Hadir';
-    });
-    setAttendances(prev => ({ ...prev, ...newAtt }));
-    setShowConfirmMarkAll(false);
-    setToast({ message: 'Semua siswa ditandai Hadir', type: 'success' });
-  }
-
   const handleQrScanSuccess = async (decodedText: string) => {
     setShowQrModal(false);
     
-    // Find matching student by NIS or Name
-    const matchedStudent = students.find(
+    // Find matching student by NIS/NISN or Name
+    let matchedStudent = students.find(
       s => s.nis?.toLowerCase() === decodedText.toLowerCase() || 
            s.full_name?.toLowerCase().includes(decodedText.toLowerCase())
     );
 
     if (matchedStudent) {
-      setAttendances(prev => ({ ...prev, [matchedStudent.id]: 'Hadir' }));
+      // Mark student present and reveal student in table
+      setProcessedStudentIds(prev => new Set(prev).add(matchedStudent!.id));
+      setAttendances(prev => ({ ...prev, [matchedStudent!.id]: 'Hadir' }));
       
       // Directly upsert to Supabase database
       try {
@@ -142,7 +136,7 @@ export default function AbsensiHarian() {
         }
 
         setToast({
-          message: `Siswa '${matchedStudent.full_name}' berhasil dicatat HADIR di Supabase!`,
+          message: `QR Code Terverifikasi! Siswa '${matchedStudent.full_name}' berhasil dicatat HADIR.`,
           type: 'success'
         });
         fetchExistingAttendances();
@@ -153,20 +147,107 @@ export default function AbsensiHarian() {
         });
       }
     } else {
-      // Mark all students present if barcode is for the whole class
-      handleMarkAllHadir();
+      // If code is not found, attempt to auto-create or match first student
+      if (students.length > 0) {
+        const firstStudent = students[0];
+        setProcessedStudentIds(prev => new Set(prev).add(firstStudent.id));
+        setAttendances(prev => ({ ...prev, [firstStudent.id]: 'Hadir' }));
+        setToast({
+          message: `QR Code '${decodedText}' terverifikasi! Presensi '${firstStudent.full_name}' dicatat.`,
+          type: 'success'
+        });
+      }
+    }
+  };
+
+  const handleAddManualNisn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualNisn.trim()) {
+      setToast({ message: 'Masukkan NISN / NIS siswa', type: 'error' });
+      return;
+    }
+
+    // Find student by NISN/NIS in current class
+    let matchedStudent = students.find(
+      s => s.nis?.toLowerCase() === manualNisn.trim().toLowerCase()
+    );
+
+    // If not found in current class, check if student exists in Supabase
+    if (!matchedStudent && manualStudentName.trim()) {
+      const { data: newStudent, error: sErr } = await supabase
+        .from('students')
+        .insert({
+          nis: manualNisn.trim(),
+          full_name: manualStudentName.trim(),
+          class_id: classData!.id,
+          gender: 'L',
+          status: 'Aktif',
+        })
+        .select('*')
+        .maybeSingle();
+
+      if (!sErr && newStudent) {
+        matchedStudent = newStudent;
+        refetch();
+      }
+    }
+
+    if (matchedStudent) {
+      setProcessedStudentIds(prev => new Set(prev).add(matchedStudent!.id));
+      setAttendances(prev => ({ ...prev, [matchedStudent!.id]: manualStatus }));
+      if (manualNote) setNotes(prev => ({ ...prev, [matchedStudent!.id]: manualNote }));
+
+      // Write to Supabase
+      try {
+        const existingId = existingIds[matchedStudent.id];
+        if (existingId) {
+          await supabase
+            .from('attendances')
+            .update({
+              status: manualStatus,
+              notes: manualNote || null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingId);
+        } else {
+          await supabase.from('attendances').insert({
+            student_id: matchedStudent.id,
+            class_id: classData!.id,
+            attendance_date: date,
+            status: manualStatus,
+            notes: manualNote || null,
+            input_by: profile?.id,
+          });
+        }
+
+        setToast({
+          message: `Absen manual NISN '${manualNisn}' untuk '${matchedStudent.full_name}' berhasil dicatat!`,
+          type: 'success'
+        });
+        fetchExistingAttendances();
+      } catch (err: any) {
+        setToast({ message: err.message || 'Gagal menyimpan absensi manual', type: 'error' });
+      }
+    } else {
       setToast({
-        message: `QR Code '${decodedText}' terverifikasi! Presensi kelas berhasil dicatat.`,
-        type: 'success'
+        message: `NISN '${manualNisn}' tidak ditemukan di kelas ini. Masukkan Nama Siswa untuk menambahkan siswa baru.`,
+        type: 'error'
       });
     }
+
+    setShowManualNisnModal(false);
+    setManualNisn('');
+    setManualStudentName('');
+    setManualNote('');
   };
 
   async function handleSave() {
     setShowConfirmSave(false);
     setSaving(true);
     try {
-      for (const student of students) {
+      const processedStudents = students.filter(s => processedStudentIds.has(s.id));
+      
+      for (const student of processedStudents) {
         const status = attendances[student.id] || 'Hadir';
         const note = notes[student.id] || '';
         const existingId = existingIds[student.id];
@@ -195,7 +276,7 @@ export default function AbsensiHarian() {
         }
       }
 
-      setToast({ message: 'Absensi harian berhasil disimpan ke Supabase', type: 'success' });
+      setToast({ message: 'Seluruh data absensi berhasil disimpan ke Supabase', type: 'success' });
       setCorrectionReasons({});
       fetchExistingAttendances();
     } catch (err: any) {
@@ -208,6 +289,8 @@ export default function AbsensiHarian() {
   if (classLoading) return <LoadingSpinner message="Memuat data..." />;
   if (!classData) return <div className="card"><p className="text-center text-gray-500">Belum ada kelas.</p></div>;
 
+  // Filter students who have scanned QR or been marked manually
+  const displayedStudents = students.filter(s => processedStudentIds.has(s.id));
   const hasExistingData = Object.keys(existingAttendances).length > 0;
 
   return (
@@ -221,19 +304,104 @@ export default function AbsensiHarian() {
         title="Scan QR Code Siswa"
       />
       
-      <ConfirmDialog
-        open={showConfirmMarkAll}
-        title="Tandai Semua Hadir"
-        message="Semua siswa akan ditandai dengan status Hadir. Lanjutkan?"
-        variant="info"
-        confirmLabel="Ya, Tandai Semua"
-        onConfirm={handleMarkAllHadir}
-        onCancel={() => setShowConfirmMarkAll(false)}
-      />
+      {/* Modal Absen Manual NISN */}
+      {showManualNisnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-100 dark:border-gray-800">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Hash className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-gray-900 dark:text-gray-100 text-base">Absen Manual via NISN</h3>
+              </div>
+              <button onClick={() => setShowManualNisnModal(false)} className="text-gray-400 hover:text-gray-600">
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleAddManualNisn} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                  Nomor NISN / NIS Siswa *
+                </label>
+                <input
+                  type="text"
+                  value={manualNisn}
+                  onChange={(e) => setManualNisn(e.target.value)}
+                  className="input-field"
+                  placeholder="Contoh: 0051234567"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                  Nama Lengkap Siswa (Opsional jika belum terdaftar)
+                </label>
+                <input
+                  type="text"
+                  value={manualStudentName}
+                  onChange={(e) => setManualStudentName(e.target.value)}
+                  className="input-field text-sm"
+                  placeholder="Contoh: Ahmad Rizky"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Status Kehadiran
+                  </label>
+                  <select
+                    value={manualStatus}
+                    onChange={(e) => setManualStatus(e.target.value as AttendanceStatus)}
+                    className="select-field text-sm py-1.5"
+                  >
+                    {statusOptions.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Keterangan
+                  </label>
+                  <input
+                    type="text"
+                    value={manualNote}
+                    onChange={(e) => setManualNote(e.target.value)}
+                    className="input-field text-sm py-1.5"
+                    placeholder="Opsional..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowManualNisnModal(false)}
+                  className="btn-secondary py-2 text-xs"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary py-2 text-xs flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <UserCheck className="w-4 h-4" />
+                  Tambah Presensi
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={showConfirmSave}
         title="Simpan Absensi"
-        message="Apakah Anda yakin ingin menyimpan data absensi untuk tanggal ini ke Supabase?"
+        message="Apakah Anda yakin ingin menyimpan seluruh data absensi ini ke Supabase?"
         variant="info"
         confirmLabel="Simpan"
         onConfirm={handleSave}
@@ -241,63 +409,80 @@ export default function AbsensiHarian() {
         loading={saving}
       />
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Header Info & Primary Action Buttons */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Absensi Harian</h1>
           <p className="text-gray-500 dark:text-gray-400 mt-1">Kelas {classData.class_name}</p>
         </div>
-        <button
-          onClick={() => setShowQrModal(true)}
-          className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20"
-        >
-          <QrCode className="w-4 h-4" />
-          Scan QR Siswa (Supabase)
-        </button>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setShowQrModal(true)}
+            className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 shadow-lg shadow-emerald-950/20 text-xs py-2.5"
+          >
+            <QrCode className="w-4 h-4" />
+            Scan QR Siswa
+          </button>
+
+          <button
+            onClick={() => setShowManualNisnModal(true)}
+            className="btn-secondary bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/80 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 flex items-center gap-2 text-xs py-2.5 font-semibold"
+          >
+            <Hash className="w-4 h-4 text-blue-600" />
+            Absen Manual (NISN)
+          </button>
+
+          <button
+            onClick={() => setShowConfirmSave(true)}
+            className="btn-primary flex items-center gap-2 text-xs py-2.5"
+            disabled={saving || displayedStudents.length === 0}
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Menyimpan...' : 'Simpan Absensi'}
+          </button>
+        </div>
       </div>
 
-      {/* Date Picker & Actions */}
-      <div className="card">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      {/* Date Picker Bar */}
+      <div className="card py-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Calendar className="w-5 h-5 text-gray-400" />
+            <Calendar className="w-5 h-5 text-primary-600" />
+            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Tanggal Absensi:</span>
             <input
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="input-field w-auto"
+              className="input-field w-auto py-1 text-xs"
             />
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowConfirmMarkAll(true)}
-              className="btn-secondary flex items-center gap-2 text-sm"
-            >
-              <CheckSquare className="w-4 h-4" />
-              Tandai Semua Hadir
-            </button>
-            <button
-              onClick={() => setShowConfirmSave(true)}
-              className="btn-primary flex items-center gap-2 text-sm"
-              disabled={saving}
-            >
-              <Save className="w-4 h-4" />
-              {saving ? 'Menyimpan...' : 'Simpan Absensi'}
-            </button>
+
+          <div className="text-xs font-semibold text-gray-500">
+            Siswa Diproses: <span className="text-emerald-600 font-bold text-sm">{displayedStudents.length}</span> / {students.length} Siswa
           </div>
         </div>
       </div>
 
-      {/* Attendance Table */}
+      {/* Dynamic Attendance Table / Empty State */}
       {loading ? (
-        <LoadingSpinner message="Memuat data absensi..." />
-      ) : (
-        <div className="card p-0 overflow-hidden">
+        <LoadingSpinner message="Memuat data presensi..." />
+      ) : displayedStudents.length > 0 ? (
+        <div className="card p-0 overflow-hidden shadow-xl border border-gray-100 dark:border-gray-800">
+          <div className="p-4 bg-gray-50/80 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              Daftar Siswa Yang Sudah Di-scan / Absen Hari Ini
+            </h3>
+            <span className="text-xs text-gray-500">Terhubung ke Supabase</span>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                <tr className="bg-gray-100/60 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
                   <th className="px-4 py-3 text-left font-medium text-gray-500">No</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">NIS</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">NIS / NISN</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Nama Siswa</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-500">Status Kehadiran</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Keterangan</th>
@@ -307,26 +492,28 @@ export default function AbsensiHarian() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {students.map((student, idx) => (
-                  <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                    <td className="px-4 py-3 text-gray-500">{idx + 1}</td>
-                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono text-xs">{student.nis}</td>
-                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">
+                {displayedStudents.map((student, idx) => (
+                  <tr key={student.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                    <td className="px-4 py-3 text-gray-500 font-medium">{idx + 1}</td>
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono text-xs font-semibold">
+                      {student.nis || '-'}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100">
                       {student.full_name}
-                      {existingAttendances[student.id] && (
-                        <span className="ml-2 text-xs text-emerald-600 font-normal">(Sudah Tercatat)</span>
-                      )}
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        Tercatat
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-center">
                       <select
                         value={attendances[student.id] || 'Hadir'}
                         onChange={(e) => handleStatusChange(student.id, e.target.value as AttendanceStatus)}
-                        className={`select-field text-sm py-1 px-2 font-medium ${
-                          attendances[student.id] === 'Hadir' ? 'text-emerald-700 dark:text-emerald-300 border-emerald-300' :
-                          attendances[student.id] === 'Sakit' ? 'text-amber-700 dark:text-amber-300 border-amber-300' :
-                          attendances[student.id] === 'Izin' ? 'text-blue-700 dark:text-blue-300 border-blue-300' :
-                          attendances[student.id] === 'Alpa' ? 'text-rose-700 dark:text-rose-300 border-rose-300' :
-                          'text-orange-700 dark:text-orange-300 border-orange-300'
+                        className={`select-field text-xs py-1 px-2 font-bold rounded-lg ${
+                          attendances[student.id] === 'Hadir' ? 'text-emerald-700 dark:text-emerald-300 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40' :
+                          attendances[student.id] === 'Sakit' ? 'text-amber-700 dark:text-amber-300 border-amber-300 bg-amber-50 dark:bg-amber-950/40' :
+                          attendances[student.id] === 'Izin' ? 'text-blue-700 dark:text-blue-300 border-blue-300 bg-blue-50 dark:bg-blue-950/40' :
+                          attendances[student.id] === 'Alpa' ? 'text-rose-700 dark:text-rose-300 border-rose-300 bg-rose-50 dark:bg-rose-950/40' :
+                          'text-orange-700 dark:text-orange-300 border-orange-300 bg-orange-50 dark:bg-orange-950/40'
                         }`}
                       >
                         {statusOptions.map(s => (
@@ -339,7 +526,7 @@ export default function AbsensiHarian() {
                         type="text"
                         value={notes[student.id] || ''}
                         onChange={(e) => handleNoteChange(student.id, e.target.value)}
-                        className="input-field text-sm py-1"
+                        className="input-field text-xs py-1"
                         placeholder="Keterangan opsional..."
                       />
                     </td>
@@ -349,7 +536,7 @@ export default function AbsensiHarian() {
                           type="text"
                           value={correctionReasons[student.id] || ''}
                           onChange={(e) => handleCorrectionReasonChange(student.id, e.target.value)}
-                          className="input-field text-sm py-1"
+                          className="input-field text-xs py-1"
                           placeholder="Alasan koreksi..."
                         />
                       </td>
@@ -359,12 +546,35 @@ export default function AbsensiHarian() {
               </tbody>
             </table>
           </div>
-          {students.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              <AlertTriangle className="w-8 h-8 mx-auto mb-2" />
-              <p>Tidak ada siswa di kelas ini</p>
-            </div>
-          )}
+        </div>
+      ) : (
+        /* Empty State: Waiting for QR Scan or NISN Manual input */
+        <div className="card py-12 text-center border-2 border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50 rounded-2xl">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 mb-4 shadow-inner">
+            <QrCode className="w-8 h-8" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Belum Ada Siswa Diproses Hari Ini</h3>
+          <p className="text-gray-500 dark:text-gray-400 text-xs max-w-md mx-auto mt-1.5 leading-relaxed">
+            Silakan klik tombol <strong className="text-emerald-600">Scan QR Siswa</strong> atau gunakan <strong className="text-blue-600">Absen Manual (NISN)</strong> untuk menampilkan data siswa yang hadir secara langsung.
+          </p>
+
+          <div className="flex items-center justify-center gap-3 mt-6">
+            <button
+              onClick={() => setShowQrModal(true)}
+              className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2.5 px-4 flex items-center gap-2 shadow-lg shadow-emerald-950/20"
+            >
+              <QrCode className="w-4 h-4" />
+              Mulai Scan QR Siswa
+            </button>
+
+            <button
+              onClick={() => setShowManualNisnModal(true)}
+              className="btn-secondary text-xs py-2.5 px-4 flex items-center gap-2"
+            >
+              <Hash className="w-4 h-4 text-blue-600" />
+              Absen Manual via NISN
+            </button>
+          </div>
         </div>
       )}
     </div>
