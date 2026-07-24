@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Class, AcademicPeriod, Teacher, Student } from '../types';
 import { useAuth } from './AuthContext';
-import { mockClass, mockAcademicPeriod, mockTeacher, mockStudents } from '../lib/mockData';
 
 export function useClassData() {
   const { profile } = useAuth();
@@ -14,6 +13,11 @@ export function useClassData() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!profile?.teacher_id) {
+      setLoading(false);
+      return;
+    }
+
     fetchData();
   }, [profile?.teacher_id]);
 
@@ -22,16 +26,15 @@ export function useClassData() {
       setLoading(true);
       setError(null);
 
-      const targetTeacherId = profile?.teacher_id || mockTeacher.id;
-
       // Fetch teacher data
       const { data: teacher, error: teacherError } = await supabase
         .from('teachers')
         .select('*')
-        .eq('id', targetTeacherId)
+        .eq('id', profile!.teacher_id)
         .single();
 
-      setTeacherData(teacher || mockTeacher);
+      if (teacherError && teacherError.code !== 'PGRST116') throw teacherError;
+      setTeacherData(teacher || null);
 
       // Fetch active academic period
       const { data: period, error: periodError } = await supabase
@@ -40,36 +43,35 @@ export function useClassData() {
         .eq('is_active', true)
         .single();
 
-      setAcademicPeriod(period || mockAcademicPeriod);
+      if (periodError && periodError.code !== 'PGRST116') throw periodError;
+      setAcademicPeriod(period || null);
 
       // Fetch class
       const { data: cls, error: classError } = await supabase
         .from('classes')
         .select('*')
-        .eq('homeroom_teacher_id', targetTeacherId)
+        .eq('homeroom_teacher_id', profile!.teacher_id)
         .single();
 
-      const activeClass = cls || mockClass;
-      setClassData(activeClass);
+      if (classError && classError.code !== 'PGRST116') throw classError;
+      setClassData(cls || null);
 
-      if (activeClass) {
+      if (cls) {
         // Fetch students
         const { data: studentData, error: studentError } = await supabase
           .from('students')
           .select('*')
-          .eq('class_id', activeClass.id)
+          .eq('class_id', cls.id)
           .order('full_name');
 
-        setStudents(studentData && studentData.length > 0 ? studentData : mockStudents);
+        if (studentError) throw studentError;
+        setStudents(studentData || []);
       } else {
-        setStudents(mockStudents);
+        setStudents([]);
       }
     } catch (err: any) {
-      console.warn('Error fetching class data, using fallback:', err);
-      setClassData(mockClass);
-      setAcademicPeriod(mockAcademicPeriod);
-      setTeacherData(mockTeacher);
-      setStudents(mockStudents);
+      console.error('Error fetching class data:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }

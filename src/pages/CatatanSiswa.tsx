@@ -8,7 +8,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Toast, { ToastType } from '../components/Toast';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { formatDate, noteCategoryColors, completionStatusColors } from '../lib/utils';
-import { mockStudentNotes } from '../lib/mockData';
 
 export default function CatatanSiswa() {
   const { profile } = useAuth();
@@ -33,7 +32,7 @@ export default function CatatanSiswa() {
     if (classData && students.length > 0) {
       fetchNotes();
     } else if (!classLoading) {
-      setNotes(mockStudentNotes as any);
+      setNotes([]);
       setLoading(false);
     }
   }, [classData, students, classLoading]);
@@ -46,10 +45,10 @@ export default function CatatanSiswa() {
         .in('student_id', students.map(s => s.id))
         .order('created_at', { ascending: false });
 
-      setNotes(data && data.length > 0 ? data : (mockStudentNotes as any));
+      setNotes(data || []);
     } catch (err) {
-      console.warn('Error fetching notes, using fallback:', err);
-      setNotes(mockStudentNotes as any);
+      console.error('Error fetching notes:', err);
+      setNotes([]);
     } finally {
       setLoading(false);
     }
@@ -78,24 +77,7 @@ export default function CatatanSiswa() {
         created_by: profile?.id,
       });
 
-      if (error) {
-        // Fallback local insert
-        const foundStudent = students.find(s => s.id === selectedStudent);
-        const newNote: any = {
-          id: `sn-${Date.now()}`,
-          student_id: selectedStudent,
-          category: noteCategory,
-          note_date: new Date().toISOString().split('T')[0],
-          content: noteContent,
-          follow_up: noteFollowUp,
-          completion_status: 'Belum',
-          visibility: noteVisibility,
-          created_by: profile?.id || 'demo',
-          created_at: new Date().toISOString(),
-          students: foundStudent,
-        };
-        setNotes(prev => [newNote, ...prev]);
-      }
+      if (error) throw error;
 
       setToast({ message: 'Catatan siswa berhasil disimpan', type: 'success' });
       setShowAdd(false);
@@ -117,10 +99,12 @@ export default function CatatanSiswa() {
         .update({ completion_status: newStatus })
         .eq('id', noteId);
 
+      if (error) throw error;
+
       setNotes(prev => prev.map(n => n.id === noteId ? { ...n, completion_status: newStatus } : n));
       setToast({ message: `Status catatan diperbarui ke ${newStatus}`, type: 'success' });
     } catch (err: any) {
-      setToast({ message: 'Gagal memperbarui status catatan', type: 'error' });
+      setToast({ message: err.message || 'Gagal memperbarui status catatan', type: 'error' });
     }
   }
 
@@ -128,11 +112,11 @@ export default function CatatanSiswa() {
     if (!deletingNoteId) return;
     try {
       const { error } = await supabase.from('student_notes').delete().eq('id', deletingNoteId);
+      if (error) throw error;
       setNotes(prev => prev.filter(n => n.id !== deletingNoteId));
       setToast({ message: 'Catatan berhasil dihapus', type: 'success' });
-    } catch (err) {
-      setNotes(prev => prev.filter(n => n.id !== deletingNoteId));
-      setToast({ message: 'Catatan berhasil dihapus', type: 'success' });
+    } catch (err: any) {
+      setToast({ message: err.message || 'Gagal menghapus catatan', type: 'error' });
     } finally {
       setDeletingNoteId(null);
     }
@@ -157,7 +141,7 @@ export default function CatatanSiswa() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Catatan Siswa</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Jurnal perkembagan & sikap siswa kelas binaan</p>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">Jurnal perkembangan & sikap siswa kelas binaan</p>
         </div>
         <button onClick={() => setShowAdd(!showAdd)} className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" />
@@ -267,7 +251,7 @@ export default function CatatanSiswa() {
       <div className="space-y-3">
         {filteredNotes.length === 0 ? (
           <div className="card text-center py-8">
-            <p className="text-gray-500">Tidak ada catatan siswa yang sesuai</p>
+            <p className="text-gray-500">Tidak ada catatan siswa</p>
           </div>
         ) : (
           filteredNotes.map((note) => (

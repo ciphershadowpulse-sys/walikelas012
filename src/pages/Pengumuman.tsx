@@ -8,7 +8,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Toast, { ToastType } from '../components/Toast';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { formatDate } from '../lib/utils';
-import { mockAnnouncements } from '../lib/mockData';
 
 export default function Pengumuman() {
   const { profile } = useAuth();
@@ -32,7 +31,7 @@ export default function Pengumuman() {
     if (classData) {
       fetchAnnouncements();
     } else if (!classLoading) {
-      setAnnouncements(mockAnnouncements);
+      setAnnouncements([]);
       setLoading(false);
     }
   }, [classData, classLoading]);
@@ -45,10 +44,10 @@ export default function Pengumuman() {
         .eq('class_id', classData!.id)
         .order('created_at', { ascending: false });
 
-      setAnnouncements(data && data.length > 0 ? data : mockAnnouncements);
+      setAnnouncements(data || []);
     } catch (err) {
-      console.warn('Error fetching announcements, using fallback:', err);
-      setAnnouncements(mockAnnouncements);
+      console.error('Error fetching announcements:', err);
+      setAnnouncements([]);
     } finally {
       setLoading(false);
     }
@@ -95,21 +94,17 @@ export default function Pengumuman() {
           .update(dataPayload)
           .eq('id', editingId);
 
-        setAnnouncements(prev => prev.map(a => a.id === editingId ? { ...a, ...dataPayload } as any : a));
+        if (error) throw error;
         setToast({ message: 'Pengumuman berhasil diperbarui', type: 'success' });
       } else {
         const { error } = await supabase.from('announcements').insert(dataPayload);
-        const newAnn: Announcement = {
-          id: `an-${Date.now()}`,
-          ...dataPayload,
-          created_at: new Date().toISOString(),
-        } as any;
-        setAnnouncements(prev => [newAnn, ...prev]);
+        if (error) throw error;
         setToast({ message: 'Pengumuman berhasil dibuat', type: 'success' });
       }
 
       setShowForm(false);
       resetForm();
+      fetchAnnouncements();
     } catch (err: any) {
       setToast({ message: err.message || 'Gagal menyimpan pengumuman', type: 'error' });
     } finally {
@@ -120,12 +115,12 @@ export default function Pengumuman() {
   async function handleDelete() {
     if (!deletingId) return;
     try {
-      await supabase.from('announcements').delete().eq('id', deletingId);
+      const { error } = await supabase.from('announcements').delete().eq('id', deletingId);
+      if (error) throw error;
       setAnnouncements(prev => prev.filter(a => a.id !== deletingId));
       setToast({ message: 'Pengumuman berhasil dihapus', type: 'success' });
-    } catch (err) {
-      setAnnouncements(prev => prev.filter(a => a.id !== deletingId));
-      setToast({ message: 'Pengumuman berhasil dihapus', type: 'success' });
+    } catch (err: any) {
+      setToast({ message: err.message || 'Gagal menghapus pengumuman', type: 'error' });
     } finally {
       setDeletingId(null);
     }

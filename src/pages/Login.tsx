@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/AuthContext';
-import { GraduationCap, Eye, EyeOff, Loader2, ShieldCheck, Sparkles, UserPlus, LogIn } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, Loader2, ShieldCheck, UserPlus, LogIn } from 'lucide-react';
 import Toast, { ToastType } from '../components/Toast';
 
 export default function Login() {
@@ -25,7 +25,7 @@ export default function Login() {
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [loading, setLoading] = useState(false);
   
-  const { signIn, signUp, loginDemo, user } = useAuth();
+  const { signIn, signUp, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -109,11 +109,6 @@ export default function Login() {
     setLoading(false);
   };
 
-  const handleDirectDemoLogin = () => {
-    loginDemo();
-    navigate('/dashboard', { replace: true });
-  };
-
   if (user) {
     return null;
   }
@@ -186,7 +181,7 @@ export default function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="input-field"
-                  placeholder="siti.rahmawati@sekolah.sch.id"
+                  placeholder="masukkan email anda"
                   autoComplete="email"
                   disabled={loading}
                   required
@@ -354,19 +349,6 @@ export default function Login() {
               </button>
             </form>
           )}
-
-          {/* Quick Demo Access Option */}
-          <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-800">
-            <p className="text-center text-xs text-gray-500 mb-2.5">Atau uji coba aplikasi secara langsung:</p>
-            <button
-              type="button"
-              onClick={handleDirectDemoLogin}
-              className="w-full btn-secondary flex items-center justify-center gap-2 py-2 text-xs font-medium border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Masuk Langsung (Akun Test Demo)
-            </button>
-          </div>
         </div>
 
         <p className="text-center text-white/50 text-xs mt-6">

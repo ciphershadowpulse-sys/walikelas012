@@ -2,7 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { Profile } from '../types';
-import { mockProfile } from '../lib/mockData';
 
 export interface SignUpData {
   fullName: string;
@@ -19,7 +18,6 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (data: SignUpData) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
-  loginDemo: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -41,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       })
       .catch((err) => {
-        console.warn('Supabase session fetch warning:', err);
+        console.error('Error fetching Supabase session:', err);
         setLoading(false);
       });
 
@@ -50,10 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session.user);
         fetchProfile(session.user.id);
       } else {
-        if (!user || user.id !== mockProfile.id) {
-          setProfile(null);
-          setUser(null);
-        }
+        setProfile(null);
+        setUser(null);
         setLoading(false);
       }
     });
@@ -72,20 +68,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error) throw error;
       setProfile(data);
     } catch (error) {
-      console.warn('Profile not found in Supabase, using default wali kelas profile:', error);
-      setProfile({
-        ...mockProfile,
-        id: userId,
-      });
+      console.error('Error fetching profile from Supabase:', error);
+      setProfile(null);
     } finally {
       setLoading(false);
     }
-  }
-
-  function loginDemo() {
-    setUser({ id: mockProfile.id, email: mockProfile.email } as User);
-    setProfile(mockProfile);
-    setLoading(false);
   }
 
   async function signIn(email: string, password: string) {
@@ -93,9 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       
       if (error) {
-        console.warn('Supabase Auth error, fallback to demo session:', error.message);
-        loginDemo();
-        return { error: null };
+        return { error: error.message };
       }
 
       if (data.user) {
@@ -107,21 +92,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .single();
 
         if (profileError || !profileData) {
-          setProfile({
-            ...mockProfile,
-            id: data.user.id,
-            email: data.user.email || email,
-          });
-        } else {
-          setProfile(profileData);
+          return { error: 'Profil wali kelas belum terdaftar di database.' };
         }
+
+        setProfile(profileData);
       }
 
       return { error: null };
     } catch (err: any) {
-      console.warn('Catch block in signIn, fallback to demo login:', err);
-      loginDemo();
-      return { error: null };
+      return { error: err.message || 'Terjadi kesalahan saat masuk.' };
     }
   }
 
@@ -136,105 +115,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       });
 
-      const userId = authData?.user?.id || `usr-${Date.now()}`;
-      let teacherId = `tch-${Date.now()}`;
-
-      // 2. Insert into teachers table
-      try {
-        const { data: teacherData, error: tErr } = await supabase
-          .from('teachers')
-          .insert({
-            nip: data.nip || `NIP-${Date.now()}`,
-            full_name: data.fullName,
-            email: data.email,
-            status: 'Aktif',
-          })
-          .select('id')
-          .single();
-
-        if (teacherData?.id) {
-          teacherId = teacherData.id;
-        }
-      } catch (err) {
-        console.warn('Could not insert teacher, using fallback ID:', err);
+      if (authError) {
+        return { error: authError.message };
       }
 
-      // 3. Insert into classes table
-      try {
-        const { data: activePeriod } = await supabase
-          .from('academic_periods')
-          .select('id')
-          .eq('is_active', true)
-          .single();
+      const userId = authData.user?.id;
+      if (!userId) {
+        return { error: 'Gagal membuat akun pengakses.' };
+      }
 
-        await supabase.from('classes').insert({
+      // 2. Insert into teachers table
+      let teacherId = '';
+      const { data: teacherData, error: tErr } = await supabase
+        .from('teachers')
+        .insert({
+          nip: data.nip || `NIP-${Date.now()}`,
+          full_name: data.fullName,
+          email: data.email,
+          status: 'Aktif',
+        })
+        .select('id')
+        .single();
+
+      if (tErr) throw tErr;
+      teacherId = teacherData.id;
+
+      // 3. Get active academic period & insert class
+      const { data: activePeriod } = await supabase
+        .from('academic_periods')
+        .select('id')
+        .eq('is_active', true)
+        .single();
+
+      const { data: classData, error: cErr } = await supabase
+        .from('classes')
+        .insert({
           class_name: data.className,
           grade_level: data.className.split('-')[0] || '10',
           homeroom_teacher_id: teacherId,
           academic_period_id: activePeriod?.id || null,
-        });
-      } catch (err) {
-        console.warn('Could not insert class, using fallback:', err);
-      }
+        })
+        .select('id')
+        .single();
+
+      if (cErr) throw cErr;
 
       // 4. Insert into profiles table
-      try {
-        await supabase.from('profiles').insert({
+      const { data: profileData, error: pErr } = await supabase
+        .from('profiles')
+        .insert({
           id: userId,
           full_name: data.fullName,
           email: data.email,
           role: 'wali_kelas',
           teacher_id: teacherId,
-        });
-      } catch (err) {
-        console.warn('Could not insert profile:', err);
-      }
+        })
+        .select('*')
+        .single();
 
-      // Set session & profile state immediately
-      const newProfile: Profile = {
-        id: userId,
-        full_name: data.fullName,
-        email: data.email,
-        role: 'wali_kelas',
-        teacher_id: teacherId,
-        created_at: new Date().toISOString(),
-      };
+      if (pErr) throw pErr;
 
-      setUser({ id: userId, email: data.email } as User);
-      setProfile(newProfile);
+      setUser(authData.user);
+      setProfile(profileData);
       setLoading(false);
 
       return { error: null };
     } catch (err: any) {
-      console.warn('Error in signUp, completing fallback registration:', err);
-      const fallbackId = `usr-${Date.now()}`;
-      const newProfile: Profile = {
-        id: fallbackId,
-        full_name: data.fullName,
-        email: data.email,
-        role: 'wali_kelas',
-        teacher_id: `tch-${Date.now()}`,
-        created_at: new Date().toISOString(),
-      };
-      setUser({ id: fallbackId, email: data.email } as User);
-      setProfile(newProfile);
-      setLoading(false);
-      return { error: null };
+      return { error: err.message || 'Gagal mendaftarkan akun wali kelas.' };
     }
   }
 
   async function signOut() {
-    try {
-      await supabase.auth.signOut();
-    } catch (err) {
-      console.warn('Error during signOut:', err);
-    }
+    await supabase.auth.signOut();
     setProfile(null);
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut, loginDemo }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );
