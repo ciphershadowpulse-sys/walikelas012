@@ -17,8 +17,6 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (data: SignUpData) => Promise<{ error: string | null; requireConfirmation?: boolean }>;
-  sendOtp: (email: string) => Promise<{ error: string | null }>;
-  verifyOtp: (email: string, token: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -27,9 +25,6 @@ function parseErrorMessage(err: any): string {
   if (typeof err === 'string') {
     if (err.includes('Email not confirmed')) {
       return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda.';
-    }
-    if (err.includes('Token has expired') || err.includes('Invalid OTP')) {
-      return 'Kode OTP tidak valid atau sudah kadaluarsa. Coba gunakan kode tes: 123456.';
     }
     return err;
   }
@@ -40,8 +35,8 @@ function parseErrorMessage(err: any): string {
     if (err.message.includes('User already registered')) {
       return 'Email ini sudah terdaftar. Silakan gunakan email lain atau Masuk ke Akun.';
     }
-    if (err.message.includes('Token has expired') || err.message.includes('invalid') || err.message.includes('OTP')) {
-      return 'Kode OTP tidak valid. Coba gunakan kode tes: 123456.';
+    if (err.message.includes('Password should be at least')) {
+      return 'Password minimal 6 karakter.';
     }
     return err.message;
   }
@@ -134,96 +129,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function sendOtp(email: string) {
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          shouldCreateUser: true,
-        },
-      });
-
-      if (error) {
-        console.warn('Supabase Send OTP warning (Mailer Rate Limited):', error.message);
-      }
-
-      return { error: null };
-    } catch (err: any) {
-      return { error: parseErrorMessage(err) };
-    }
-  }
-
-  async function verifyOtp(email: string, token: string) {
-    try {
-      // Direct test OTP support (123456) if SMTP mailer is rate limited or unconfigured
-      if (token === '123456') {
-        const fallbackId = `usr-otp-${Date.now()}`;
-        const newProfile: Profile = {
-          id: fallbackId,
-          full_name: email.split('@')[0] || 'Wali Kelas',
-          email,
-          role: 'wali_kelas',
-          teacher_id: null,
-          created_at: new Date().toISOString(),
-        };
-
-        setUser({ id: fallbackId, email } as User);
-        setProfile(newProfile);
-        setLoading(false);
-        return { error: null };
-      }
-
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: 'email',
-      });
-
-      if (error) {
-        console.warn('Verify OTP warning:', error.message);
-        // Fallback test login for development
-        const fallbackId = `usr-otp-${Date.now()}`;
-        const newProfile: Profile = {
-          id: fallbackId,
-          full_name: email.split('@')[0] || 'Wali Kelas',
-          email,
-          role: 'wali_kelas',
-          teacher_id: null,
-          created_at: new Date().toISOString(),
-        };
-
-        setUser({ id: fallbackId, email } as User);
-        setProfile(newProfile);
-        setLoading(false);
-        return { error: null };
-      }
-
-      if (data.user) {
-        setUser(data.user);
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .maybeSingle();
-
-        setProfile(profileData || {
-          id: data.user.id,
-          full_name: data.user.user_metadata?.full_name || email.split('@')[0],
-          email: data.user.email || email,
-          role: 'wali_kelas',
-          teacher_id: null,
-          created_at: new Date().toISOString(),
-        });
-      }
-
-      return { error: null };
-    } catch (err: any) {
-      return { error: parseErrorMessage(err) };
-    }
-  }
-
   async function signUp(data: SignUpData) {
     try {
+      // 1. Sign up user in Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
@@ -357,7 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, sendOtp, verifyOtp, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );
