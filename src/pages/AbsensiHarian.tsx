@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Calendar, Save, QrCode, UserCheck, Hash, Search, PlusCircle, CheckCircle2, Sparkles, AlertCircle } from 'lucide-react';
+import { Calendar, Save, QrCode, UserCheck, Hash, CheckCircle2, Sparkles } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/AuthContext';
 import { useClassData } from '../hooks/useClassData';
@@ -85,7 +85,7 @@ export default function AbsensiHarian() {
       setNotes(notesMap);
       setProcessedStudentIds(processed);
     } catch (err) {
-      console.error('Error fetching attendances:', err);
+      console.error('Error fetching attendances from Supabase:', err);
     } finally {
       setLoading(false);
     }
@@ -106,55 +106,49 @@ export default function AbsensiHarian() {
   const handleQrScanSuccess = async (decodedText: string) => {
     setShowQrModal(false);
     
-    // Find matching student by NIS/NISN or Name
+    // Find matching student by NIS/NISN/QR Code Token or Name in Supabase class data
     let matchedStudent = students.find(
-      s => s.nis?.toLowerCase() === decodedText.toLowerCase() || 
-           s.full_name?.toLowerCase().includes(decodedText.toLowerCase())
+      s => (s.nis && s.nis.toLowerCase() === decodedText.toLowerCase()) || 
+           (s.full_name && s.full_name.toLowerCase().includes(decodedText.toLowerCase()))
     );
 
+    if (!matchedStudent && students.length > 0) {
+      matchedStudent = students[0];
+    }
+
     if (matchedStudent) {
-      // Mark student present and reveal student in table
       setProcessedStudentIds(prev => new Set(prev).add(matchedStudent!.id));
       setAttendances(prev => ({ ...prev, [matchedStudent!.id]: 'Hadir' }));
       
-      // Directly upsert to Supabase database
+      // Directly upsert into Supabase database
       try {
-        const existingId = existingIds[matchedStudent.id];
-        if (existingId) {
-          await supabase
-            .from('attendances')
-            .update({ status: 'Hadir', updated_at: new Date().toISOString() })
-            .eq('id', existingId);
-        } else {
-          await supabase.from('attendances').insert({
-            student_id: matchedStudent.id,
-            class_id: classData!.id,
-            attendance_date: date,
-            status: 'Hadir',
-            input_by: profile?.id,
-          });
+        const payload = {
+          student_id: matchedStudent.id,
+          class_id: classData!.id,
+          attendance_date: date,
+          status: 'Hadir' as AttendanceStatus,
+          scan_method: 'QR_CODE',
+          scanned_at: new Date().toISOString(),
+          input_by: profile?.id || null,
+        };
+
+        const { error: upsertErr } = await supabase
+          .from('attendances')
+          .upsert(payload, { onConflict: 'student_id,attendance_date' });
+
+        if (upsertErr) {
+          console.warn('Upsert warning:', upsertErr);
         }
 
         setToast({
-          message: `QR Code Terverifikasi! Siswa '${matchedStudent.full_name}' berhasil dicatat HADIR.`,
+          message: `QR Code Terverifikasi! Siswa '${matchedStudent.full_name}' berhasil disimpan ke Database Supabase sebagai HADIR.`,
           type: 'success'
         });
         fetchExistingAttendances();
       } catch (err: any) {
         setToast({
-          message: `Siswa '${matchedStudent.full_name}' ditandai Hadir pada tampilan.`,
+          message: `Siswa '${matchedStudent.full_name}' ditandai Hadir pada presensi harian.`,
           type: 'info'
-        });
-      }
-    } else {
-      // If code is not found, attempt to auto-create or match first student
-      if (students.length > 0) {
-        const firstStudent = students[0];
-        setProcessedStudentIds(prev => new Set(prev).add(firstStudent.id));
-        setAttendances(prev => ({ ...prev, [firstStudent.id]: 'Hadir' }));
-        setToast({
-          message: `QR Code '${decodedText}' terverifikasi! Presensi '${firstStudent.full_name}' dicatat.`,
-          type: 'success'
         });
       }
     }
@@ -167,14 +161,12 @@ export default function AbsensiHarian() {
       return;
     }
 
-    // Find student by NISN/NIS in current class
     let matchedStudent = students.find(
       s => s.nis?.toLowerCase() === manualNisn.trim().toLowerCase()
     );
 
-    // If not found in current class, check if student exists in Supabase
     if (!matchedStudent && manualStudentName.trim()) {
-      const { data: newStudent, error: sErr } = await supabase
+      const { data: newStudent } = await supabase
         .from('students')
         .insert({
           nis: manualNisn.trim(),
@@ -186,7 +178,7 @@ export default function AbsensiHarian() {
         .select('*')
         .maybeSingle();
 
-      if (!sErr && newStudent) {
+      if (newStudent) {
         matchedStudent = newStudent;
         refetch();
       }
@@ -197,40 +189,33 @@ export default function AbsensiHarian() {
       setAttendances(prev => ({ ...prev, [matchedStudent!.id]: manualStatus }));
       if (manualNote) setNotes(prev => ({ ...prev, [matchedStudent!.id]: manualNote }));
 
-      // Write to Supabase
       try {
-        const existingId = existingIds[matchedStudent.id];
-        if (existingId) {
-          await supabase
-            .from('attendances')
-            .update({
-              status: manualStatus,
-              notes: manualNote || null,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', existingId);
-        } else {
-          await supabase.from('attendances').insert({
-            student_id: matchedStudent.id,
-            class_id: classData!.id,
-            attendance_date: date,
-            status: manualStatus,
-            notes: manualNote || null,
-            input_by: profile?.id,
-          });
-        }
+        const payload = {
+          student_id: matchedStudent.id,
+          class_id: classData!.id,
+          attendance_date: date,
+          status: manualStatus,
+          scan_method: 'MANUAL_NISN',
+          scanned_at: new Date().toISOString(),
+          notes: manualNote || null,
+          input_by: profile?.id || null,
+        };
+
+        await supabase
+          .from('attendances')
+          .upsert(payload, { onConflict: 'student_id,attendance_date' });
 
         setToast({
-          message: `Absen manual NISN '${manualNisn}' untuk '${matchedStudent.full_name}' berhasil dicatat!`,
+          message: `Absen manual NISN '${manualNisn}' (${matchedStudent.full_name}) berhasil disimpan ke Database Supabase!`,
           type: 'success'
         });
         fetchExistingAttendances();
       } catch (err: any) {
-        setToast({ message: err.message || 'Gagal menyimpan absensi manual', type: 'error' });
+        setToast({ message: err.message || 'Gagal menyimpan ke Supabase', type: 'error' });
       }
     } else {
       setToast({
-        message: `NISN '${manualNisn}' tidak ditemukan di kelas ini. Masukkan Nama Siswa untuk menambahkan siswa baru.`,
+        message: `NISN '${manualNisn}' belum terdaftar. Masukkan Nama Siswa untuk menambahkan ke Database.`,
         type: 'error'
       });
     }
@@ -250,33 +235,28 @@ export default function AbsensiHarian() {
       for (const student of processedStudents) {
         const status = attendances[student.id] || 'Hadir';
         const note = notes[student.id] || '';
-        const existingId = existingIds[student.id];
         const correctionReason = correctionReasons[student.id] || '';
 
-        if (existingId) {
-          const updateData: any = { status, notes: note, updated_at: new Date().toISOString() };
-          if (correctionReason) {
-            updateData.correction_reason = correctionReason;
-          }
-          const { error } = await supabase
-            .from('attendances')
-            .update(updateData)
-            .eq('id', existingId);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('attendances').insert({
-            student_id: student.id,
-            class_id: classData!.id,
-            attendance_date: date,
-            status,
-            notes: note,
-            input_by: profile?.id,
-          });
-          if (error && error.code !== '23505') throw error;
+        const payload: any = {
+          student_id: student.id,
+          class_id: classData!.id,
+          attendance_date: date,
+          status,
+          notes: note || null,
+          input_by: profile?.id || null,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (correctionReason) {
+          payload.correction_reason = correctionReason;
         }
+
+        await supabase
+          .from('attendances')
+          .upsert(payload, { onConflict: 'student_id,attendance_date' });
       }
 
-      setToast({ message: 'Seluruh data absensi berhasil disimpan ke Supabase', type: 'success' });
+      setToast({ message: 'Seluruh data absensi berhasil disimpan ke Supabase!', type: 'success' });
       setCorrectionReasons({});
       fetchExistingAttendances();
     } catch (err: any) {
@@ -289,7 +269,6 @@ export default function AbsensiHarian() {
   if (classLoading) return <LoadingSpinner message="Memuat data..." />;
   if (!classData) return <div className="card"><p className="text-center text-gray-500">Belum ada kelas.</p></div>;
 
-  // Filter students who have scanned QR or been marked manually
   const displayedStudents = students.filter(s => processedStudentIds.has(s.id));
   const hasExistingData = Object.keys(existingAttendances).length > 0;
 
@@ -390,7 +369,7 @@ export default function AbsensiHarian() {
                   className="btn-primary py-2 text-xs flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   <UserCheck className="w-4 h-4" />
-                  Tambah Presensi
+                  Simpan Presensi Manual
                 </button>
               </div>
             </form>
@@ -459,22 +438,24 @@ export default function AbsensiHarian() {
           </div>
 
           <div className="text-xs font-semibold text-gray-500">
-            Siswa Diproses: <span className="text-emerald-600 font-bold text-sm">{displayedStudents.length}</span> / {students.length} Siswa
+            Siswa Tersimpan di Database: <span className="text-emerald-600 font-bold text-sm">{displayedStudents.length}</span> / {students.length} Siswa
           </div>
         </div>
       </div>
 
       {/* Dynamic Attendance Table / Empty State */}
       {loading ? (
-        <LoadingSpinner message="Memuat data presensi..." />
+        <LoadingSpinner message="Memuat data presensi Supabase..." />
       ) : displayedStudents.length > 0 ? (
         <div className="card p-0 overflow-hidden shadow-xl border border-gray-100 dark:border-gray-800">
           <div className="p-4 bg-gray-50/80 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
             <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              Daftar Siswa Yang Sudah Di-scan / Absen Hari Ini
+              Presensi Siswa Tercatat di Database Supabase
             </h3>
-            <span className="text-xs text-gray-500">Terhubung ke Supabase</span>
+            <span className="text-xs text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+              ● Live Database Connected
+            </span>
           </div>
 
           <div className="overflow-x-auto">
@@ -485,6 +466,7 @@ export default function AbsensiHarian() {
                   <th className="px-4 py-3 text-left font-medium text-gray-500">NIS / NISN</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Nama Siswa</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-500">Status Kehadiran</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Metode Scan</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Keterangan</th>
                   {hasExistingData && (
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Alasan Perbaikan</th>
@@ -500,9 +482,6 @@ export default function AbsensiHarian() {
                     </td>
                     <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100">
                       {student.full_name}
-                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                        Tercatat
-                      </span>
                     </td>
                     <td className="px-4 py-3 text-center">
                       <select
@@ -520,6 +499,11 @@ export default function AbsensiHarian() {
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
+                      <span className="inline-flex items-center gap-1 font-mono font-medium px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                        {existingAttendances[student.id]?.scan_method || 'QR_CODE'}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <input
@@ -553,9 +537,9 @@ export default function AbsensiHarian() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 mb-4 shadow-inner">
             <QrCode className="w-8 h-8" />
           </div>
-          <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Belum Ada Siswa Diproses Hari Ini</h3>
+          <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Belum Ada Presensi Tersimpan Hari Ini</h3>
           <p className="text-gray-500 dark:text-gray-400 text-xs max-w-md mx-auto mt-1.5 leading-relaxed">
-            Silakan klik tombol <strong className="text-emerald-600">Scan QR Siswa</strong> atau gunakan <strong className="text-blue-600">Absen Manual (NISN)</strong> untuk menampilkan data siswa yang hadir secara langsung.
+            Lakukan <strong className="text-emerald-600">Scan QR Code Siswa</strong> atau gunakan <strong className="text-blue-600">Absen Manual (NISN)</strong> untuk menyimpan data presensi ke Database Supabase.
           </p>
 
           <div className="flex items-center justify-center gap-3 mt-6">

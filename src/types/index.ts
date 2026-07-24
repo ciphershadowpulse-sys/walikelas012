@@ -64,6 +64,8 @@ export interface Attendance {
   class_id: string;
   attendance_date: string;
   status: AttendanceStatus;
+  scan_method?: string;
+  scanned_at?: string;
   notes: string;
   input_by: string;
   correction_reason: string;
