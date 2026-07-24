@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
-import { X, Camera, Upload, QrCode, CheckCircle2 } from 'lucide-react';
+import { X, Camera, QrCode, CheckCircle2, Sparkles } from 'lucide-react';
 
 interface QRScannerModalProps {
   open: boolean;
@@ -15,20 +15,22 @@ export default function QRScannerModal({
   onScanSuccess,
   title = 'Scan QR Code Absensi'
 }: QRScannerModalProps) {
-  const [activeMode, setActiveMode] = useState<'camera' | 'preset'>('camera');
   const [scannedResult, setScannedResult] = useState<string | null>(null);
 
   useEffect(() => {
     let scanner: Html5QrcodeScanner | null = null;
 
-    if (open && activeMode === 'camera') {
-      // Initialize HTML5 QR Code Scanner
+    if (open) {
+      setScannedResult(null);
+
+      // Auto-initialize camera QR Code scanner immediately on modal open
       scanner = new Html5QrcodeScanner(
-        'qr-reader-container',
+        'qr-reader-auto-container',
         {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
+          fps: 15,
+          qrbox: { width: 260, height: 260 },
           aspectRatio: 1.0,
+          showTorchButtonIfSupported: true,
         },
         /* verbose= */ false
       );
@@ -41,8 +43,8 @@ export default function QRScannerModal({
           }
           onScanSuccess(decodedText);
         },
-        (error) => {
-          // Ignore frequent scan errors
+        (_error) => {
+          // Continuous frame decoding errors ignored silently
         }
       );
     }
@@ -52,121 +54,67 @@ export default function QRScannerModal({
         scanner.clear().catch(console.error);
       }
     };
-  }, [open, activeMode]);
+  }, [open]);
 
   if (!open) return null;
 
-  const handleSelectPreset = (code: string) => {
-    setScannedResult(code);
-    onScanSuccess(code);
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 dark:border-gray-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+      <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 dark:border-gray-800">
         
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
-          <div className="flex items-center gap-2">
-            <QrCode className="w-5 h-5 text-primary-800 dark:text-primary-400" />
-            <h3 className="font-bold text-gray-900 dark:text-gray-100 text-base">{title}</h3>
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
+              <QrCode className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900 dark:text-gray-100 text-base flex items-center gap-1.5">
+                {title}
+                <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Kamera Aktif • Otomatis Membaca QR Code</p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Mode Switcher */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setActiveMode('camera')}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                activeMode === 'camera'
-                  ? 'bg-primary-800 text-white shadow-sm'
-                  : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-100'
-              }`}
-            >
-              <Camera className="w-4 h-4" />
-              Kamera / Upload QR
-            </button>
-            <button
-              onClick={() => setActiveMode('preset')}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                activeMode === 'preset'
-                  ? 'bg-primary-800 text-white shadow-sm'
-                  : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-100'
-              }`}
-            >
-              <QrCode className="w-4 h-4" />
-              Pilih Barcode Presensi
-            </button>
-          </div>
-        </div>
-
-        {/* Scanner Content */}
+        {/* Live Camera Scanner Box */}
         <div className="p-6">
-          {activeMode === 'camera' ? (
-            <div>
-              <div id="qr-reader-container" className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700"></div>
-              <p className="text-center text-xs text-gray-500 dark:text-gray-400 mt-3">
-                Arahkan kamera ke Barcode / QR Code atau upload gambar QR Code dari perangkat Anda.
-              </p>
+          <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500/30 dark:border-emerald-500/20 bg-black shadow-inner">
+            
+            {/* HTML5 Scanner Container */}
+            <div id="qr-reader-auto-container" className="w-full"></div>
+
+            {/* Viewfinder overlay */}
+            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-4">
+              <div className="flex items-center gap-2 bg-emerald-600/90 text-white text-xs font-semibold px-3 py-1 rounded-full shadow-lg backdrop-blur-md mt-2">
+                <Camera className="w-3.5 h-3.5 animate-pulse text-emerald-200" />
+                <span>Kamera Aktif • Arahkan ke QR Code</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Result Footer */}
+          {scannedResult ? (
+            <div className="mt-4 p-3.5 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between animate-fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                <div>
+                  <p className="font-bold">QR Code Berhasil Di-scan Otomatis!</p>
+                  <p className="text-emerald-700 dark:text-emerald-400 font-mono text-[11px] mt-0.5">{scannedResult}</p>
+                </div>
+              </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              <p className="text-xs font-medium text-gray-600 dark:text-gray-400 text-center mb-2">
-                Pilih salah satu Barcode QR Code untuk langsung melakukan presensi:
-              </p>
-              
-              {/* Barcode 1 */}
-              <button
-                onClick={() => handleSelectPreset('QR-ABSENSI-BARCODE-1')}
-                className="w-full p-4 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-primary-600 dark:hover:border-primary-500 bg-gray-50 dark:bg-gray-800/60 hover:bg-primary-50 dark:hover:bg-primary-950/40 transition-all flex items-center justify-between text-left group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-white dark:bg-gray-900 flex items-center justify-center border border-gray-200 dark:border-gray-700 text-primary-800 dark:text-primary-400 font-bold group-hover:scale-105 transition-transform">
-                    <QrCode className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100 group-hover:text-primary-800 dark:group-hover:text-primary-400 transition-colors">
-                      Barcode 1: Scan Presensi Siswa
-                    </h4>
-                    <p className="text-xs text-gray-500">Scan QR Code Kehadiran Harian Kelas</p>
-                  </div>
-                </div>
-                <CheckCircle2 className="w-5 h-5 text-gray-300 group-hover:text-emerald-500 transition-colors" />
-              </button>
-
-              {/* Barcode 2 */}
-              <button
-                onClick={() => handleSelectPreset('QR-ABSENSI-BARCODE-2')}
-                className="w-full p-4 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-emerald-600 dark:hover:border-emerald-500 bg-gray-50 dark:bg-gray-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-all flex items-center justify-between text-left group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-white dark:bg-gray-900 flex items-center justify-center border border-gray-200 dark:border-gray-700 text-emerald-600 font-bold group-hover:scale-105 transition-transform">
-                    <QrCode className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100 group-hover:text-emerald-600 transition-colors">
-                      Barcode 2: Scan untuk Absensi
-                    </h4>
-                    <p className="text-xs text-gray-500">Scan QR Code Absensi Harian Otomatis</p>
-                  </div>
-                </div>
-                <CheckCircle2 className="w-5 h-5 text-gray-300 group-hover:text-emerald-500 transition-colors" />
-              </button>
-            </div>
-          )}
-
-          {scannedResult && (
-            <div className="mt-4 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
-              <span>QR Code Terdeteksi: <strong>{scannedResult}</strong></span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            </div>
+            <p className="text-center text-xs text-gray-500 dark:text-gray-400 mt-4 leading-relaxed">
+              Arahkan kamera ke Barcode 1, Barcode 2, atau QR Code siswa. Sistem akan otomatis mendeteksi dan mencatat presensi seketika.
+            </p>
           )}
         </div>
       </div>
