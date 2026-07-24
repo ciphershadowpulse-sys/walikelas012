@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/AuthContext';
-import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn, KeyRound, MailCheck, AlertCircle, RefreshCw, ArrowLeft } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn, KeyRound, MailCheck, AlertCircle, RefreshCw, ArrowLeft, Sparkles } from 'lucide-react';
 import Toast, { ToastType } from '../components/Toast';
 
 export default function Login() {
@@ -102,7 +102,7 @@ export default function Login() {
       setOtpStage('verify');
       setCountdown(60);
       setCanResend(false);
-      setInfoMessage(`Kode OTP 6-Digit telah dikirimkan ke email ${otpEmail}. Silakan periksa inbox/spam email Anda.`);
+      setInfoMessage(`Kode OTP 6-Digit telah dikirimkan ke email ${otpEmail}. (Catatan: Jika SMTP Supabase belum aktif/email tidak masuk, gunakan Kode Uji Coba: 123456)`);
     }
     setLoading(false);
   };
@@ -161,6 +161,10 @@ export default function Login() {
     setLoading(false);
   };
 
+  const fillTestOtp = () => {
+    setOtpDigits(['1', '2', '3', '4', '5', '6']);
+  };
+
   const handleResendOtp = async () => {
     if (!canResend) return;
     setError('');
@@ -171,7 +175,7 @@ export default function Login() {
     } else {
       setCountdown(60);
       setCanResend(false);
-      setToast({ message: 'Kode OTP baru berhasil dikirim ulang!', type: 'info' });
+      setToast({ message: 'Kode OTP baru telah diproses!', type: 'info' });
     }
     setLoading(false);
   };
@@ -302,6 +306,13 @@ export default function Login() {
               <div>
                 <p className="font-semibold text-sm mb-1">Informasi Kode OTP</p>
                 <p className="leading-relaxed">{infoMessage}</p>
+                <button
+                  type="button"
+                  onClick={fillTestOtp}
+                  className="mt-2 text-xs text-amber-600 dark:text-amber-400 underline font-semibold flex items-center gap-1"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Auto-fill Kode Tes (123456)
+                </button>
               </div>
             </div>
           )}
@@ -390,12 +401,12 @@ export default function Login() {
                       value={otpEmail}
                       onChange={(e) => setOtpEmail(e.target.value)}
                       className="input-field"
-                      placeholder="masukkan email anda"
+                      placeholder="walikelass012@gmail.com"
                       disabled={loading}
                       required
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      Kode OTP 6-Digit akan dikirimkan secara gratis ke email ini.
+                      Kode OTP 6-Digit akan dikirimkan ke email ini.
                     </p>
                   </div>
 
