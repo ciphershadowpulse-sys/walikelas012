@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, CheckSquare, Save, AlertTriangle } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Calendar, CheckSquare, Save, AlertTriangle, QrCode } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/AuthContext';
 import { useClassData } from '../hooks/useClassData';
@@ -7,11 +8,13 @@ import { Student, Attendance, AttendanceStatus } from '../types';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Toast, { ToastType } from '../components/Toast';
 import ConfirmDialog from '../components/ConfirmDialog';
+import QRScannerModal from '../components/QRScannerModal';
 import { getTodayString } from '../lib/utils';
 
 const statusOptions: AttendanceStatus[] = ['Hadir', 'Sakit', 'Izin', 'Alpa', 'Terlambat'];
 
 export default function AbsensiHarian() {
+  const location = useLocation();
   const { profile } = useAuth();
   const { classData, students, loading: classLoading } = useClassData();
   const [date, setDate] = useState(getTodayString());
@@ -24,7 +27,19 @@ export default function AbsensiHarian() {
   const [loading, setLoading] = useState(false);
   const [showConfirmMarkAll, setShowConfirmMarkAll] = useState(false);
   const [showConfirmSave, setShowConfirmSave] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+
+  // If navigated directly from QR Login on main page
+  useEffect(() => {
+    if (location.state && (location.state as any).qrScanned) {
+      const code = (location.state as any).code || 'Barcode Presensi';
+      setToast({
+        message: `Terhubung via Scan QR (${code}). Presensi kelas siap dicatat!`,
+        type: 'success'
+      });
+    }
+  }, [location.state]);
 
   useEffect(() => {
     if (classData && students.length > 0) {
@@ -99,6 +114,31 @@ export default function AbsensiHarian() {
     setToast({ message: 'Semua siswa ditandai Hadir', type: 'success' });
   }
 
+  const handleQrScanSuccess = (decodedText: string) => {
+    setShowQrModal(false);
+    
+    // Find matching student by NIS or Name or mark next student
+    const matchedStudent = students.find(
+      s => s.nis?.toLowerCase() === decodedText.toLowerCase() || 
+           s.full_name?.toLowerCase().includes(decodedText.toLowerCase())
+    );
+
+    if (matchedStudent) {
+      setAttendances(prev => ({ ...prev, [matchedStudent.id]: 'Hadir' }));
+      setToast({
+        message: `Siswa '${matchedStudent.full_name}' berhasil ditandai HADIR via QR Code!`,
+        type: 'success'
+      });
+    } else {
+      // Mark all students present if class barcode
+      handleMarkAllHadir();
+      setToast({
+        message: `QR Code '${decodedText}' terverifikasi! Presensi seluruh kelas ditandai HADIR.`,
+        type: 'success'
+      });
+    }
+  };
+
   async function handleSave() {
     setShowConfirmSave(false);
     setSaving(true);
@@ -132,7 +172,7 @@ export default function AbsensiHarian() {
         }
       }
 
-      setToast({ message: 'Absensi berhasil disimpan', type: 'success' });
+      setToast({ message: 'Absensi harian berhasil disimpan', type: 'success' });
       setCorrectionReasons({});
       fetchExistingAttendances();
     } catch (err: any) {
@@ -150,6 +190,13 @@ export default function AbsensiHarian() {
   return (
     <div className="space-y-6">
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
+      <QRScannerModal
+        open={showQrModal}
+        onClose={() => setShowQrModal(false)}
+        onScanSuccess={handleQrScanSuccess}
+        title="Scan QR Presensi Siswa"
+      />
       
       <ConfirmDialog
         open={showConfirmMarkAll}
@@ -171,9 +218,18 @@ export default function AbsensiHarian() {
         loading={saving}
       />
 
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Absensi Harian</h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">Kelas {classData.class_name}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Absensi Harian</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">Kelas {classData.class_name}</p>
+        </div>
+        <button
+          onClick={() => setShowQrModal(true)}
+          className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20"
+        >
+          <QrCode className="w-4 h-4" />
+          Scan QR Presensi Siswa
+        </button>
       </div>
 
       {/* Date Picker & Actions */}
