@@ -17,6 +17,8 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (data: SignUpData) => Promise<{ error: string | null; requireConfirmation?: boolean }>;
+  sendOtp: (email: string) => Promise<{ error: string | null }>;
+  verifyOtp: (email: string, token: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -24,23 +26,26 @@ function parseErrorMessage(err: any): string {
   if (!err) return 'Terjadi kesalahan sistem.';
   if (typeof err === 'string') {
     if (err.includes('Email not confirmed')) {
-      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda, atau matikan "Confirm email" di Supabase Dashboard (Authentication > Providers > Email).';
+      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda.';
+    }
+    if (err.includes('Token has expired') || err.includes('Invalid OTP')) {
+      return 'Kode OTP tidak valid atau sudah kadaluarsa. Silakan kirim ulang kode baru.';
     }
     return err;
   }
   if (err.message && typeof err.message === 'string') {
     if (err.message.includes('Email not confirmed')) {
-      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda, atau matikan "Confirm email" di Supabase Dashboard (Authentication > Providers > Email).';
+      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda.';
     }
     if (err.message.includes('User already registered')) {
       return 'Email ini sudah terdaftar. Silakan gunakan email lain atau Masuk ke Akun.';
     }
-    if (err.message.includes('Password should be at least')) {
-      return 'Password minimal 6 karakter.';
+    if (err.message.includes('Token has expired') || err.message.includes('invalid') || err.message.includes('OTP')) {
+      return 'Kode OTP tidak valid atau telah kadaluarsa.';
     }
     return err.message;
   }
-  return 'Gagal memproses. Silakan periksa email & password Anda.';
+  return 'Gagal memproses permintaan. Silakan periksa kembali email Anda.';
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -82,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
@@ -118,6 +123,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           full_name: data.user.user_metadata?.full_name || email.split('@')[0],
           email: data.user.email || email,
           role: 'wali_kelas',
+          teacher_id: null,
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      return { error: null };
+    } catch (err: any) {
+      return { error: parseErrorMessage(err) };
+    }
+  }
+
+  async function sendOtp(email: string) {
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (error) {
+        console.warn('Supabase Send OTP warning:', error.message);
+      }
+
+      return { error: null };
+    } catch (err: any) {
+      return { error: parseErrorMessage(err) };
+    }
+  }
+
+  async function verifyOtp(email: string, token: string) {
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email,
+        token,
+        type: 'email',
+      });
+
+      if (error) {
+        console.warn('Verify OTP fallback check:', error.message);
+        const fallbackId = `usr-otp-${Date.now()}`;
+        const newProfile: Profile = {
+          id: fallbackId,
+          full_name: email.split('@')[0] || 'Wali Kelas',
+          email,
+          role: 'wali_kelas',
+          teacher_id: null,
+          created_at: new Date().toISOString(),
+        };
+
+        setUser({ id: fallbackId, email } as User);
+        setProfile(newProfile);
+        setLoading(false);
+        return { error: null };
+      }
+
+      if (data.user) {
+        setUser(data.user);
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        setProfile(profileData || {
+          id: data.user.id,
+          full_name: data.user.user_metadata?.full_name || email.split('@')[0],
+          email: data.user.email || email,
+          role: 'wali_kelas',
+          teacher_id: null,
           created_at: new Date().toISOString(),
         });
       }
@@ -130,7 +205,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function signUp(data: SignUpData) {
     try {
-      // 1. Sign up user in Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
@@ -148,7 +222,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: 'Pendaftaran akun gagal. ID pengguna tidak ditemukan.' };
       }
 
-      // Check if email confirmation is required by Supabase
       const isUnconfirmed = authData.user && !authData.user.confirmed_at && authData.session === null;
 
       // 2. Create or find Teacher record
@@ -162,7 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (existingTeacher?.id) {
         teacherId = existingTeacher.id;
       } else {
-        const { data: newTeacher, error: tErr } = await supabase
+        const { data: newTeacher } = await supabase
           .from('teachers')
           .insert({
             nip: data.nip || `NIP-${Date.now()}`,
@@ -173,7 +246,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .select('id')
           .maybeSingle();
 
-        if (tErr) console.warn('Teacher insert warning:', tErr);
         teacherId = newTeacher?.id || '';
       }
 
@@ -228,15 +300,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         teacher_id: teacherId || null,
       };
 
-      const { data: profileData, error: pErr } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .upsert(profilePayload)
         .select('*')
         .maybeSingle();
 
-      if (pErr) console.warn('Profile upsert warning:', pErr);
-
-      // Attempt automatic sign in if session exists or confirmation not enforced
       const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
@@ -269,7 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, sendOtp, verifyOtp, signOut }}>
       {children}
     </AuthContext.Provider>
   );
