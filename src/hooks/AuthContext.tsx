@@ -20,6 +20,24 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
+function parseErrorMessage(err: any): string {
+  if (!err) return 'Terjadi kesalahan sistem.';
+  if (typeof err === 'string') return err;
+  if (err.message && typeof err.message === 'string') {
+    if (err.message.includes('User already registered')) {
+      return 'Email ini sudah terdaftar. Silakan gunakan email lain atau Masuk ke Akun.';
+    }
+    if (err.message.includes('Password should be at least')) {
+      return 'Password minimal 6 karakter.';
+    }
+    return err.message;
+  }
+  if (err.error_description && typeof err.error_description === 'string') {
+    return err.error_description;
+  }
+  return 'Gagal memproses pendaftaran. Silakan coba kembali.';
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -63,11 +81,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
-        console.warn('Warning fetching profile:', error);
-      }
       setProfile(data || null);
     } catch (error) {
       console.error('Error fetching profile from Supabase:', error);
@@ -82,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       
       if (error) {
-        return { error: error.message };
+        return { error: parseErrorMessage(error) };
       }
 
       if (data.user) {
@@ -91,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .from('profiles')
           .select('*')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
 
         setProfile(profileData || {
           id: data.user.id,
@@ -104,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: null };
     } catch (err: any) {
-      return { error: err.message || 'Terjadi kesalahan saat masuk.' };
+      return { error: parseErrorMessage(err) };
     }
   }
 
@@ -120,12 +135,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (authError) {
-        return { error: authError.message };
+        return { error: parseErrorMessage(authError) };
       }
 
       let userId = authData.user?.id;
 
-      // Try automatic sign in immediately so client gets session token
+      // Automatic sign in immediately to acquire active session token
       const { data: signInData } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
@@ -137,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!userId) {
-        return { error: 'Pendaftaran gagal, ID pengguna tidak ditemukan.' };
+        return { error: 'Pendaftaran akun gagal. Sesi pengguna tidak ditemukan.' };
       }
 
       // 2. Create or find Teacher record
@@ -160,10 +175,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             status: 'Aktif',
           })
           .select('id')
-          .single();
+          .maybeSingle();
 
         if (tErr) {
-          console.error('Error inserting teacher:', tErr);
+          console.warn('Teacher insert warning:', tErr);
         }
         teacherId = newTeacher?.id || '';
       }
@@ -187,7 +202,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             is_active: true,
           })
           .select('id')
-          .single();
+          .maybeSingle();
 
         periodId = newPeriod?.id || '';
       }
@@ -223,10 +238,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .from('profiles')
         .upsert(profilePayload)
         .select('*')
-        .single();
+        .maybeSingle();
 
       if (pErr) {
-        console.error('Error upserting profile:', pErr);
+        console.warn('Profile upsert warning:', pErr);
       }
 
       const activeProfile = profileData || {
@@ -239,8 +254,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: null };
     } catch (err: any) {
-      console.error('Catch error in signUp:', err);
-      return { error: err.message || 'Gagal mendaftarkan akun wali kelas.' };
+      console.error('Error in signUp:', err);
+      return { error: parseErrorMessage(err) };
     }
   }
 

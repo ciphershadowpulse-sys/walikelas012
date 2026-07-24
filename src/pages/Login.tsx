@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/AuthContext';
-import { GraduationCap, Eye, EyeOff, Loader2, ShieldCheck, UserPlus, LogIn } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn } from 'lucide-react';
 import Toast, { ToastType } from '../components/Toast';
 
 export default function Login() {
@@ -21,7 +21,7 @@ export default function Login() {
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegPassword, setShowRegPassword] = useState(false);
 
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [loading, setLoading] = useState(false);
   
@@ -53,7 +53,8 @@ export default function Login() {
 
     const result = await signIn(email, password);
     if (result.error) {
-      setError(result.error);
+      const errStr = typeof result.error === 'string' ? result.error : (result.error as any)?.message || 'Gagal masuk ke sistem';
+      setError(errStr);
     } else {
       navigate('/dashboard', { replace: true });
     }
@@ -99,7 +100,8 @@ export default function Login() {
     });
 
     if (result.error) {
-      setError(result.error);
+      const errStr = typeof result.error === 'string' ? result.error : (result.error as any)?.message || 'Gagal mendaftarkan akun';
+      setError(errStr);
     } else {
       setToast({ message: 'Akun Wali Kelas berhasil terdaftar!', type: 'success' });
       setTimeout(() => {
@@ -162,7 +164,7 @@ export default function Login() {
             </button>
           </div>
 
-          {error && (
+          {error && typeof error === 'string' && error.trim() !== '' && error.trim() !== '{}' && (
             <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
               {error}
             </div>
