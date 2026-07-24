@@ -13,60 +13,76 @@ export function useClassData() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!profile?.teacher_id) {
-      setLoading(false);
-      return;
-    }
-
     fetchData();
-  }, [profile?.teacher_id]);
+  }, [profile?.id, profile?.teacher_id]);
 
   async function fetchData() {
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch teacher data
-      const { data: teacher, error: teacherError } = await supabase
-        .from('teachers')
-        .select('*')
-        .eq('id', profile!.teacher_id)
-        .single();
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
 
-      if (teacherError && teacherError.code !== 'PGRST116') throw teacherError;
-      setTeacherData(teacher || null);
+      let teacherId = profile.teacher_id;
 
-      // Fetch active academic period
-      const { data: period, error: periodError } = await supabase
+      // 1. Fetch teacher data
+      if (teacherId) {
+        const { data: teacher } = await supabase
+          .from('teachers')
+          .select('*')
+          .eq('id', teacherId)
+          .maybeSingle();
+
+        setTeacherData(teacher || null);
+      } else if (profile.email) {
+        const { data: teacher } = await supabase
+          .from('teachers')
+          .select('*')
+          .eq('email', profile.email)
+          .maybeSingle();
+
+        if (teacher) {
+          setTeacherData(teacher);
+          teacherId = teacher.id;
+        }
+      }
+
+      // 2. Fetch active academic period
+      const { data: period } = await supabase
         .from('academic_periods')
         .select('*')
         .eq('is_active', true)
-        .single();
+        .maybeSingle();
 
-      if (periodError && periodError.code !== 'PGRST116') throw periodError;
       setAcademicPeriod(period || null);
 
-      // Fetch class
-      const { data: cls, error: classError } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('homeroom_teacher_id', profile!.teacher_id)
-        .single();
-
-      if (classError && classError.code !== 'PGRST116') throw classError;
-      setClassData(cls || null);
-
-      if (cls) {
-        // Fetch students
-        const { data: studentData, error: studentError } = await supabase
-          .from('students')
+      // 3. Fetch class
+      if (teacherId) {
+        const { data: cls } = await supabase
+          .from('classes')
           .select('*')
-          .eq('class_id', cls.id)
-          .order('full_name');
+          .eq('homeroom_teacher_id', teacherId)
+          .maybeSingle();
 
-        if (studentError) throw studentError;
-        setStudents(studentData || []);
+        setClassData(cls || null);
+
+        if (cls) {
+          // Fetch students
+          const { data: studentData } = await supabase
+            .from('students')
+            .select('*')
+            .eq('class_id', cls.id)
+            .order('full_name');
+
+          setStudents(studentData || []);
+        } else {
+          setStudents([]);
+        }
       } else {
+        setClassData(null);
         setStudents([]);
       }
     } catch (err: any) {

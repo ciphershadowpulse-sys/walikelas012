@@ -65,8 +65,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq('id', userId)
         .single();
 
-      if (error) throw error;
-      setProfile(data);
+      if (error && error.code !== 'PGRST116') {
+        console.warn('Warning fetching profile:', error);
+      }
+      setProfile(data || null);
     } catch (error) {
       console.error('Error fetching profile from Supabase:', error);
       setProfile(null);
@@ -85,17 +87,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data.user) {
         setUser(data.user);
-        const { data: profileData, error: profileError } = await supabase
+        const { data: profileData } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', data.user.id)
           .single();
 
-        if (profileError || !profileData) {
-          return { error: 'Profil wali kelas belum terdaftar di database.' };
-        }
-
-        setProfile(profileData);
+        setProfile(profileData || {
+          id: data.user.id,
+          full_name: data.user.user_metadata?.full_name || email.split('@')[0],
+          email: data.user.email || email,
+          role: 'wali_kelas',
+          created_at: new Date().toISOString(),
+        });
       }
 
       return { error: null };
@@ -119,68 +123,123 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: authError.message };
       }
 
-      const userId = authData.user?.id;
-      if (!userId) {
-        return { error: 'Gagal membuat akun pengakses.' };
+      let userId = authData.user?.id;
+
+      // Try automatic sign in immediately so client gets session token
+      const { data: signInData } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+
+      if (signInData?.user) {
+        userId = signInData.user.id;
+        setUser(signInData.user);
       }
 
-      // 2. Insert into teachers table
+      if (!userId) {
+        return { error: 'Pendaftaran gagal, ID pengguna tidak ditemukan.' };
+      }
+
+      // 2. Create or find Teacher record
       let teacherId = '';
-      const { data: teacherData, error: tErr } = await supabase
+      const { data: existingTeacher } = await supabase
         .from('teachers')
-        .insert({
-          nip: data.nip || `NIP-${Date.now()}`,
-          full_name: data.fullName,
-          email: data.email,
-          status: 'Aktif',
-        })
         .select('id')
-        .single();
+        .eq('email', data.email)
+        .maybeSingle();
 
-      if (tErr) throw tErr;
-      teacherId = teacherData.id;
+      if (existingTeacher?.id) {
+        teacherId = existingTeacher.id;
+      } else {
+        const { data: newTeacher, error: tErr } = await supabase
+          .from('teachers')
+          .insert({
+            nip: data.nip || `NIP-${Date.now()}`,
+            full_name: data.fullName,
+            email: data.email,
+            status: 'Aktif',
+          })
+          .select('id')
+          .single();
 
-      // 3. Get active academic period & insert class
+        if (tErr) {
+          console.error('Error inserting teacher:', tErr);
+        }
+        teacherId = newTeacher?.id || '';
+      }
+
+      // 3. Find or Create Active Academic Period
+      let periodId = '';
       const { data: activePeriod } = await supabase
         .from('academic_periods')
         .select('id')
         .eq('is_active', true)
-        .single();
+        .maybeSingle();
 
-      const { data: classData, error: cErr } = await supabase
-        .from('classes')
-        .insert({
-          class_name: data.className,
-          grade_level: data.className.split('-')[0] || '10',
-          homeroom_teacher_id: teacherId,
-          academic_period_id: activePeriod?.id || null,
-        })
-        .select('id')
-        .single();
+      if (activePeriod?.id) {
+        periodId = activePeriod.id;
+      } else {
+        const { data: newPeriod } = await supabase
+          .from('academic_periods')
+          .insert({
+            school_year: '2024/2025',
+            semester: 'Ganjil',
+            is_active: true,
+          })
+          .select('id')
+          .single();
 
-      if (cErr) throw cErr;
+        periodId = newPeriod?.id || '';
+      }
 
-      // 4. Insert into profiles table
+      // 4. Create Class record
+      if (teacherId) {
+        const { data: existingClass } = await supabase
+          .from('classes')
+          .select('id')
+          .eq('homeroom_teacher_id', teacherId)
+          .maybeSingle();
+
+        if (!existingClass) {
+          await supabase.from('classes').insert({
+            class_name: data.className,
+            grade_level: data.className.split('-')[0] || '10',
+            homeroom_teacher_id: teacherId,
+            academic_period_id: periodId || null,
+          });
+        }
+      }
+
+      // 5. Create Profile record
+      const profilePayload = {
+        id: userId,
+        full_name: data.fullName,
+        email: data.email,
+        role: 'wali_kelas' as const,
+        teacher_id: teacherId || null,
+      };
+
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-        .insert({
-          id: userId,
-          full_name: data.fullName,
-          email: data.email,
-          role: 'wali_kelas',
-          teacher_id: teacherId,
-        })
+        .upsert(profilePayload)
         .select('*')
         .single();
 
-      if (pErr) throw pErr;
+      if (pErr) {
+        console.error('Error upserting profile:', pErr);
+      }
 
-      setUser(authData.user);
-      setProfile(profileData);
+      const activeProfile = profileData || {
+        ...profilePayload,
+        created_at: new Date().toISOString(),
+      };
+
+      setProfile(activeProfile);
       setLoading(false);
 
       return { error: null };
     } catch (err: any) {
+      console.error('Catch error in signUp:', err);
       return { error: err.message || 'Gagal mendaftarkan akun wali kelas.' };
     }
   }
