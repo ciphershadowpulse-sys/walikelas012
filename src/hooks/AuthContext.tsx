@@ -16,14 +16,22 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (data: SignUpData) => Promise<{ error: string | null }>;
+  signUp: (data: SignUpData) => Promise<{ error: string | null; requireConfirmation?: boolean }>;
   signOut: () => Promise<void>;
 }
 
 function parseErrorMessage(err: any): string {
   if (!err) return 'Terjadi kesalahan sistem.';
-  if (typeof err === 'string') return err;
+  if (typeof err === 'string') {
+    if (err.includes('Email not confirmed')) {
+      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda, atau matikan "Confirm email" di Supabase Dashboard (Authentication > Providers > Email).';
+    }
+    return err;
+  }
   if (err.message && typeof err.message === 'string') {
+    if (err.message.includes('Email not confirmed')) {
+      return 'Email Anda belum dikonfirmasi. Silakan periksa inbox/spam email Anda, atau matikan "Confirm email" di Supabase Dashboard (Authentication > Providers > Email).';
+    }
     if (err.message.includes('User already registered')) {
       return 'Email ini sudah terdaftar. Silakan gunakan email lain atau Masuk ke Akun.';
     }
@@ -32,10 +40,7 @@ function parseErrorMessage(err: any): string {
     }
     return err.message;
   }
-  if (err.error_description && typeof err.error_description === 'string') {
-    return err.error_description;
-  }
-  return 'Gagal memproses pendaftaran. Silakan coba kembali.';
+  return 'Gagal memproses. Silakan periksa email & password Anda.';
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -138,22 +143,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: parseErrorMessage(authError) };
       }
 
-      let userId = authData.user?.id;
-
-      // Automatic sign in immediately to acquire active session token
-      const { data: signInData } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
-      });
-
-      if (signInData?.user) {
-        userId = signInData.user.id;
-        setUser(signInData.user);
-      }
-
+      const userId = authData.user?.id;
       if (!userId) {
-        return { error: 'Pendaftaran akun gagal. Sesi pengguna tidak ditemukan.' };
+        return { error: 'Pendaftaran akun gagal. ID pengguna tidak ditemukan.' };
       }
+
+      // Check if email confirmation is required by Supabase
+      const isUnconfirmed = authData.user && !authData.user.confirmed_at && authData.session === null;
 
       // 2. Create or find Teacher record
       let teacherId = '';
@@ -177,9 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .select('id')
           .maybeSingle();
 
-        if (tErr) {
-          console.warn('Teacher insert warning:', tErr);
-        }
+        if (tErr) console.warn('Teacher insert warning:', tErr);
         teacherId = newTeacher?.id || '';
       }
 
@@ -240,18 +234,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .select('*')
         .maybeSingle();
 
-      if (pErr) {
-        console.warn('Profile upsert warning:', pErr);
+      if (pErr) console.warn('Profile upsert warning:', pErr);
+
+      // Attempt automatic sign in if session exists or confirmation not enforced
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+
+      if (signInData?.user) {
+        setUser(signInData.user);
+        setProfile(profileData || { ...profilePayload, created_at: new Date().toISOString() });
+        setLoading(false);
+        return { error: null };
       }
 
-      const activeProfile = profileData || {
-        ...profilePayload,
-        created_at: new Date().toISOString(),
-      };
+      if (isUnconfirmed || (signInErr && signInErr.message.includes('Email not confirmed'))) {
+        setLoading(false);
+        return { error: null, requireConfirmation: true };
+      }
 
-      setProfile(activeProfile);
       setLoading(false);
-
       return { error: null };
     } catch (err: any) {
       console.error('Error in signUp:', err);

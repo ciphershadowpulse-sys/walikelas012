@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/AuthContext';
-import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn, MailCheck, AlertCircle } from 'lucide-react';
 import Toast, { ToastType } from '../components/Toast';
 
 export default function Login() {
@@ -22,6 +22,7 @@ export default function Login() {
   const [showRegPassword, setShowRegPassword] = useState(false);
 
   const [error, setError] = useState<string>('');
+  const [infoMessage, setInfoMessage] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [loading, setLoading] = useState(false);
   
@@ -37,6 +38,7 @@ export default function Login() {
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfoMessage('');
     setLoading(true);
 
     if (!email.trim()) {
@@ -53,8 +55,7 @@ export default function Login() {
 
     const result = await signIn(email, password);
     if (result.error) {
-      const errStr = typeof result.error === 'string' ? result.error : (result.error as any)?.message || 'Gagal masuk ke sistem';
-      setError(errStr);
+      setError(result.error);
     } else {
       navigate('/dashboard', { replace: true });
     }
@@ -64,6 +65,7 @@ export default function Login() {
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfoMessage('');
 
     if (!regFullName.trim()) {
       setError('Nama lengkap wali kelas harus diisi');
@@ -100,8 +102,12 @@ export default function Login() {
     });
 
     if (result.error) {
-      const errStr = typeof result.error === 'string' ? result.error : (result.error as any)?.message || 'Gagal mendaftarkan akun';
-      setError(errStr);
+      setError(result.error);
+    } else if (result.requireConfirmation) {
+      setInfoMessage('Pendaftaran Berhasil! Silakan periksa inbox/spam email Anda untuk verifikasi, atau matikan "Confirm email" di Supabase Dashboard (Authentication > Providers > Email) agar bisa langsung masuk.');
+      setActiveTab('login');
+      setEmail(regEmail);
+      setPassword(regPassword);
     } else {
       setToast({ message: 'Akun Wali Kelas berhasil terdaftar!', type: 'success' });
       setTimeout(() => {
@@ -140,7 +146,7 @@ export default function Login() {
           <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 dark:bg-gray-800/80 rounded-xl mb-6">
             <button
               type="button"
-              onClick={() => { setActiveTab('login'); setError(''); }}
+              onClick={() => { setActiveTab('login'); setError(''); setInfoMessage(''); }}
               className={`flex items-center justify-center gap-2 py-2 text-sm font-semibold rounded-lg transition-all ${
                 activeTab === 'login'
                   ? 'bg-white dark:bg-gray-900 text-primary-800 dark:text-primary-300 shadow-sm'
@@ -152,7 +158,7 @@ export default function Login() {
             </button>
             <button
               type="button"
-              onClick={() => { setActiveTab('register'); setError(''); }}
+              onClick={() => { setActiveTab('register'); setError(''); setInfoMessage(''); }}
               className={`flex items-center justify-center gap-2 py-2 text-sm font-semibold rounded-lg transition-all ${
                 activeTab === 'register'
                   ? 'bg-white dark:bg-gray-900 text-primary-800 dark:text-primary-300 shadow-sm'
@@ -164,9 +170,20 @@ export default function Login() {
             </button>
           </div>
 
-          {error && typeof error === 'string' && error.trim() !== '' && error.trim() !== '{}' && (
-            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
-              {error}
+          {infoMessage && (
+            <div className="mb-4 p-3.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-lg text-xs text-blue-800 dark:text-blue-300 flex items-start gap-2.5">
+              <MailCheck className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm mb-1">Verifikasi Email Diperlukan</p>
+                <p className="leading-relaxed">{infoMessage}</p>
+              </div>
+            </div>
+          )}
+
+          {error && typeof error === 'string' && error.trim() !== '' && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="leading-relaxed">{error}</div>
             </div>
           )}
 
