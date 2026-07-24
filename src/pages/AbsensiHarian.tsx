@@ -30,14 +30,11 @@ export default function AbsensiHarian() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
-  // If navigated directly from QR Login on main page
+  // If navigated directly from QR scan in top header
   useEffect(() => {
     if (location.state && (location.state as any).qrScanned) {
       const code = (location.state as any).code || 'Barcode Presensi';
-      setToast({
-        message: `Terhubung via Scan QR (${code}). Presensi kelas siap dicatat!`,
-        type: 'success'
-      });
+      handleQrScanSuccess(code);
     }
   }, [location.state]);
 
@@ -114,10 +111,10 @@ export default function AbsensiHarian() {
     setToast({ message: 'Semua siswa ditandai Hadir', type: 'success' });
   }
 
-  const handleQrScanSuccess = (decodedText: string) => {
+  const handleQrScanSuccess = async (decodedText: string) => {
     setShowQrModal(false);
     
-    // Find matching student by NIS or Name or mark next student
+    // Find matching student by NIS or Name
     const matchedStudent = students.find(
       s => s.nis?.toLowerCase() === decodedText.toLowerCase() || 
            s.full_name?.toLowerCase().includes(decodedText.toLowerCase())
@@ -125,15 +122,41 @@ export default function AbsensiHarian() {
 
     if (matchedStudent) {
       setAttendances(prev => ({ ...prev, [matchedStudent.id]: 'Hadir' }));
-      setToast({
-        message: `Siswa '${matchedStudent.full_name}' berhasil ditandai HADIR via QR Code!`,
-        type: 'success'
-      });
+      
+      // Directly upsert to Supabase database
+      try {
+        const existingId = existingIds[matchedStudent.id];
+        if (existingId) {
+          await supabase
+            .from('attendances')
+            .update({ status: 'Hadir', updated_at: new Date().toISOString() })
+            .eq('id', existingId);
+        } else {
+          await supabase.from('attendances').insert({
+            student_id: matchedStudent.id,
+            class_id: classData!.id,
+            attendance_date: date,
+            status: 'Hadir',
+            input_by: profile?.id,
+          });
+        }
+
+        setToast({
+          message: `Siswa '${matchedStudent.full_name}' berhasil dicatat HADIR di Supabase!`,
+          type: 'success'
+        });
+        fetchExistingAttendances();
+      } catch (err: any) {
+        setToast({
+          message: `Siswa '${matchedStudent.full_name}' ditandai Hadir pada tampilan.`,
+          type: 'info'
+        });
+      }
     } else {
-      // Mark all students present if class barcode
+      // Mark all students present if barcode is for the whole class
       handleMarkAllHadir();
       setToast({
-        message: `QR Code '${decodedText}' terverifikasi! Presensi seluruh kelas ditandai HADIR.`,
+        message: `QR Code '${decodedText}' terverifikasi! Presensi kelas berhasil dicatat.`,
         type: 'success'
       });
     }
@@ -172,7 +195,7 @@ export default function AbsensiHarian() {
         }
       }
 
-      setToast({ message: 'Absensi harian berhasil disimpan', type: 'success' });
+      setToast({ message: 'Absensi harian berhasil disimpan ke Supabase', type: 'success' });
       setCorrectionReasons({});
       fetchExistingAttendances();
     } catch (err: any) {
@@ -195,7 +218,7 @@ export default function AbsensiHarian() {
         open={showQrModal}
         onClose={() => setShowQrModal(false)}
         onScanSuccess={handleQrScanSuccess}
-        title="Scan QR Presensi Siswa"
+        title="Scan QR Code Siswa"
       />
       
       <ConfirmDialog
@@ -210,7 +233,7 @@ export default function AbsensiHarian() {
       <ConfirmDialog
         open={showConfirmSave}
         title="Simpan Absensi"
-        message="Apakah Anda yakin ingin menyimpan data absensi untuk tanggal ini?"
+        message="Apakah Anda yakin ingin menyimpan data absensi untuk tanggal ini ke Supabase?"
         variant="info"
         confirmLabel="Simpan"
         onConfirm={handleSave}
@@ -228,7 +251,7 @@ export default function AbsensiHarian() {
           className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20"
         >
           <QrCode className="w-4 h-4" />
-          Scan QR Presensi Siswa
+          Scan QR Siswa (Supabase)
         </button>
       </div>
 

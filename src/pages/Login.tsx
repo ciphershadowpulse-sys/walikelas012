@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/AuthContext';
-import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn, QrCode, MailCheck, AlertCircle } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, Loader2, UserPlus, LogIn, MailCheck, AlertCircle } from 'lucide-react';
 import Toast, { ToastType } from '../components/Toast';
-import QRScannerModal from '../components/QRScannerModal';
 
 export default function Login() {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
@@ -26,7 +25,6 @@ export default function Login() {
   const [infoMessage, setInfoMessage] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showQrModal, setShowQrModal] = useState(false);
   
   const { signIn, signUp, user } = useAuth();
   const navigate = useNavigate();
@@ -119,20 +117,6 @@ export default function Login() {
     setLoading(false);
   };
 
-  const handleQrScanSuccess = async (decodedText: string) => {
-    setShowQrModal(false);
-    setToast({ message: `QR Code '${decodedText}' terverifikasi! Menghubungkan ke Absensi Harian...`, type: 'success' });
-
-    // Auto-login with default homeroom session if user is not logged in yet
-    if (!user) {
-      await signIn('wali@sekolah.sch.id', 'password123');
-    }
-
-    setTimeout(() => {
-      navigate('/absensi-harian', { replace: true, state: { qrScanned: true, code: decodedText } });
-    }, 600);
-  };
-
   if (user) {
     return null;
   }
@@ -140,13 +124,6 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-950 via-primary-900 to-slate-950 p-4 relative overflow-hidden">
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-
-      <QRScannerModal
-        open={showQrModal}
-        onClose={() => setShowQrModal(false)}
-        onScanSuccess={handleQrScanSuccess}
-        title="Scan QR Code Absensi Harian"
-      />
 
       {/* Decorative Blur Backgrounds */}
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-primary-600/20 rounded-full blur-3xl pointer-events-none" />
@@ -160,23 +137,6 @@ export default function Login() {
           </div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">Wali Kelas Digital</h1>
           <p className="text-primary-200 mt-1 text-sm font-medium">Sistem Presensi & Manajemen Wali Kelas</p>
-        </div>
-
-        {/* Quick QR Code Scanner Bar */}
-        <div className="mb-4 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 rounded-2xl p-4 shadow-xl border border-emerald-400/30 text-white flex items-center justify-between transition-all cursor-pointer group"
-             onClick={() => setShowQrModal(true)}>
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center group-hover:scale-110 transition-transform">
-              <QrCode className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-sm">Scan QR Presensi Harian</h3>
-              <p className="text-xs text-emerald-100">Scan Barcode 1 / Barcode 2 untuk langsung Absensi</p>
-            </div>
-          </div>
-          <span className="text-xs font-bold bg-white text-emerald-800 px-3 py-1.5 rounded-lg shadow-sm group-hover:bg-emerald-50 transition-colors">
-            Scan QR
-          </span>
         </div>
 
         {/* Form Card */}
